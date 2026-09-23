@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/sirupsen/logrus"
 
 	"ticker/internal/advantage"
@@ -42,12 +43,41 @@ var (
 // repeatedly: a single pass can pass by luck.
 const shuffleRuns = 20
 
+// fakeCache keeps the handler tests offline — the real cache now needs a
+// memcached server, and no unit test should need a container.
+type fakeCache struct {
+	items map[string]*memcache.Item
+	gets  int
+	sets  int
+}
+
+// Get mimics the real client: an absent key is ErrCacheMiss, not a nil item.
+func (f *fakeCache) Get(key string) (*memcache.Item, error) {
+	f.gets++
+	item, ok := f.items[key]
+	if !ok {
+		return nil, memcache.ErrCacheMiss
+	}
+	return item, nil
+}
+
+func (f *fakeCache) Set(item *memcache.Item) error {
+	f.sets++
+	if f.items == nil {
+		f.items = map[string]*memcache.Item{}
+	}
+	f.items[item.Key] = item
+	return nil
+}
+
+var _ ICache = (*fakeCache)(nil)
+
 func newTestServer(t *testing.T, adv advantage.IAdvantage, nDays int) *Server {
 	t.Helper()
 	log := logrus.New()
 	log.Out = io.Discard
 	cfg := &config.Config{Ticker: "IBM", APIKey: "test-key", NDays: nDays}
-	return NewServer(cfg, log, adv)
+	return NewServer(cfg, log, adv, &fakeCache{})
 }
 
 // serie builds one row the way Alpha Vantage sends it — every number a string.

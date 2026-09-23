@@ -2,21 +2,39 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
 	"time"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/sirupsen/logrus"
 
 	"ticker/internal/advantage"
 	"ticker/internal/config"
 )
 
+// How long do we keep the fetched data cached for,
+// since advantage uses 25 requests per day, we have to be really long with it.
+const cacheTTL = 24 * time.Hour
+
+type ICache interface {
+	Get(key string) (*memcache.Item, error)
+	Set(item *memcache.Item) error
+}
+
 type Server struct {
-	cfg *config.Config
-	log *logrus.Logger
-	adv advantage.IAdvantage
+	cfg   *config.Config
+	log   *logrus.Logger
+	adv   advantage.IAdvantage
+	cache ICache
+}
+
+// Builds a cache key of the symbol + date so that we can avoid repulling the
+// same information over and over.
+func buildCacheKey(symbol string, t time.Time) string {
+	return symbol + "||" + t.Format(time.DateOnly)
 }
 
 type Ticker struct {
@@ -95,8 +113,8 @@ func NewTickerFromStockData(adv advantage.StockData, days int) Ticker {
 	return result
 }
 
-func NewServer(cfg *config.Config, log *logrus.Logger, adv advantage.IAdvantage) *Server {
-	return &Server{cfg, log, adv}
+func NewServer(cfg *config.Config, log *logrus.Logger, adv advantage.IAdvantage, cache ICache) *Server {
+	return &Server{cfg, log, adv, cache}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -108,16 +126,62 @@ func (s *Server) Routes() http.Handler {
 func (s *Server) handleAverage(w http.ResponseWriter, r *http.Request) {
 	s.log.WithField("ticker", s.cfg.Ticker).Info("GET /average")
 
-	data, err := s.adv.GetTickerData(r.Context())
-	if err != nil {
-		s.log.WithError(err).Error("unable to fetch ticker data")
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+	key := buildCacheKey(s.cfg.Ticker, time.Now())
+	data, hit := s.cachedData(key)
+	if !hit {
+		var err error
+		data, err = s.adv.GetTickerData(r.Context())
+		if err != nil {
+			s.log.WithError(err).Error("unable to fetch ticker data")
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if len(data.Series) > 0 {
+			s.cacheData(key, data)
+		}
 	}
+	s.log.WithFields(logrus.Fields{"key": key, "hit": hit}).Info("ticker data")
+
 	ticker := NewTickerFromStockData(data, s.cfg.NDays)
 	ticker.CalculateAverageClose()
 
 	s.writeJSON(w, http.StatusOK, ticker)
+}
+
+func (s *Server) cachedData(key string) (advantage.StockData, bool) {
+	var zero advantage.StockData
+
+	item, err := s.cache.Get(key)
+	if errors.Is(err, memcache.ErrCacheMiss) {
+		return zero, false
+	}
+	if err != nil {
+		s.log.WithError(err).WithField("key", key).Warn("cache read failed")
+		return zero, false
+	}
+
+	var data advantage.StockData
+	if err := json.Unmarshal(item.Value, &data); err != nil {
+		s.log.WithError(err).WithField("key", key).Error("cached value is not valid json")
+		return zero, false
+	}
+	return data, true
+}
+
+func (s *Server) cacheData(key string, data advantage.StockData) {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		s.log.WithError(err).WithField("key", key).Error("unable to encode value for cache")
+		return
+	}
+
+	item := &memcache.Item{Key: key, Value: encoded, Expiration: int32(cacheTTL.Seconds())}
+	if err := s.cache.Set(item); err != nil {
+		s.log.WithError(err).WithFields(logrus.Fields{
+			"key":   key,
+			"bytes": len(encoded),
+		}).Warn("cache write failed")
+	}
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {

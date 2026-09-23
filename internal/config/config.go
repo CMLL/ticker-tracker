@@ -1,16 +1,20 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 )
 
+const defaultMemcachedAddr = "localhost:11211"
+
 type Config struct {
-	Ticker string
-	APIKey string
-	NDays  int
+	Ticker        string
+	APIKey        string
+	NDays         int
+	MemcachedAddr string
 }
 
 func Load() (*Config, error) {
@@ -20,9 +24,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unable to parse NDAYS: %s", days)
 	}
 	cfg := &Config{
-		Ticker: os.Getenv("TICKER"),
-		APIKey: os.Getenv("API_KEY"),
-		NDays:  ndays,
+		Ticker:        os.Getenv("TICKER"),
+		APIKey:        os.Getenv("API_KEY"),
+		NDays:         ndays,
+		MemcachedAddr: cmp.Or(os.Getenv("MEMCACHED_ADDR"), defaultMemcachedAddr),
 	}
 
 	var missing []string

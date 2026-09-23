@@ -55,7 +55,7 @@ func (c *AdvantageClient) GetTickerData(ctx context.Context) (StockData, error) 
 	if err != nil {
 		return StockData{}, err
 	}
-	logrus.Infof("AlphaAdvantage resp Status Code: %d", resp.StatusCode)
+	logrus.WithField("status", resp.StatusCode).Infof("AlphaAdvantage response")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

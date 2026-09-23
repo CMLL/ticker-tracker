@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/sirupsen/logrus"
 
 	"ticker/internal/advantage"
@@ -29,10 +30,14 @@ func main() {
 	}
 
 	client := advantage.NewAdvantageClient(cfg.APIKey, cfg.Ticker, cfg.NDays)
+	store := memcache.New(cfg.MemcachedAddr)
+	if err := store.Ping(); err != nil {
+		log.WithError(err).WithField("addr", cfg.MemcachedAddr).Fatal("memcached unreachable")
+	}
 
 	srv := &http.Server{
 		Addr:              defaultAddr,
-		Handler:           api.NewServer(cfg, log, &client).Routes(),
+		Handler:           api.NewServer(cfg, log, &client, store).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
