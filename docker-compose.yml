@@ -1,0 +1,28 @@
+services:
+
+  memcached:
+    image: memcached:1.6-alpine
+    ports:
+      - "11211:11211"
+    # 64MB is far more than one daily series needs; the default is 64 anyway,
+    # set explicitly so the cap is visible.
+    command: ["-m", "64"]
+    healthcheck:
+      test: ["CMD-SHELL", "echo stats | nc -w 1 localhost 11211 | grep -q uptime"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      MEMCACHED_ADDR: memcached:11211
+      TICKER: ${TICKER}
+      API_KEY: ${API_KEY}
+      NDAYS: ${NDAYS}
+    depends_on:
+      memcached:
+        condition: service_healthy
+    restart: on-failure
