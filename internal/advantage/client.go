@@ -3,9 +3,11 @@ package advantage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -38,22 +40,33 @@ type IAdvantage interface {
 }
 
 type AdvantageClient struct {
-	key    string
-	symbol string
-	nDays  int
-	http   *http.Client
+	key     string
+	symbol  string
+	baseURL string
+	http    *http.Client
+}
+
+func (c *AdvantageClient) queryURL(key string) string {
+	q := url.Values{"apikey": {key}, "function": {"TIME_SERIES_DAILY"}, "symbol": {c.symbol}}
+	return c.baseURL + "?" + q.Encode()
+}
+
+func (c *AdvantageClient) redact(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return &url.Error{Op: ue.Op, URL: c.queryURL("REDACTED"), Err: ue.Err}
+	}
+	return err
 }
 
 func (c *AdvantageClient) GetTickerData(ctx context.Context) (StockData, error) {
-	url := fmt.Sprintf("%s?apikey=%s&function=TIME_SERIES_DAILY&symbol=%s", AdvantageUrl, c.key, c.symbol)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.queryURL(c.key), nil)
 	if err != nil {
-		return StockData{}, err
+		return StockData{}, c.redact(err)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return StockData{}, err
+		return StockData{}, c.redact(err)
 	}
 	logrus.WithField("status", resp.StatusCode).Infof("AlphaAdvantage response")
 	defer resp.Body.Close()
@@ -75,13 +88,15 @@ func (c *AdvantageClient) GetTickerData(ctx context.Context) (StockData, error) 
 	}
 
 	var data StockData
-	json.Unmarshal(body, &data)
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		return StockData{}, fmt.Errorf("error when decoding response body")
+	}
 
 	return data, nil
 }
 
-func NewAdvantageClient(key string, symbol string, nDays int) AdvantageClient {
+func NewAdvantageClient(key string, symbol string) AdvantageClient {
 	client := http.Client{Timeout: 5 * time.Second}
-	return AdvantageClient{key, symbol,
-		nDays, &client}
+	return AdvantageClient{key, symbol, AdvantageUrl, &client}
 }

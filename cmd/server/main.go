@@ -29,7 +29,7 @@ func main() {
 		log.WithError(err).Fatal("configuration error")
 	}
 
-	client := advantage.NewAdvantageClient(cfg.APIKey, cfg.Ticker, cfg.NDays)
+	client := advantage.NewAdvantageClient(cfg.APIKey, cfg.Ticker)
 	store := memcache.New(cfg.MemcachedAddr)
 	if err := store.Ping(); err != nil {
 		log.WithError(err).WithField("addr", cfg.MemcachedAddr).Fatal("memcached unreachable")
