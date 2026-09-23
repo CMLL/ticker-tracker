@@ -148,6 +148,13 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// TODO Improvements
+// Why passing the symbol ticker via an environment variable instead of using a parameter in the query?
+// The other approach would make it much more versatile instead, unless we only care about a single ticker
+// Days could still be handled as an environ variable.
+// If instead the ticker being hardcoded is a real requirement, instead of making the request on demand,
+// we could do it automatically on a schedule and populate the cache directly, and only serve that data on the
+// GET /average
 func (s *Server) handleAverage(w http.ResponseWriter, r *http.Request) {
 	s.log.WithField("ticker", s.cfg.Ticker).Info("GET /average")
 

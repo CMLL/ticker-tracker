@@ -35,6 +35,15 @@ func main() {
 		log.WithError(err).WithField("addr", cfg.MemcachedAddr).Fatal("memcached unreachable")
 	}
 
+	// TODO Missing exported metrics for observability.
+	// To Setup:
+	// Requests histogram to track performance.
+	// Cache read request duration to detect if we are hammering the cache with read requests.
+	// Cache write request duration to detect if the writes instead of the reads are slow.
+	// AlphaAdvantage request duration to detect a network issue reaching out
+	// Counters for Cache layer hits, detects if a software bug makes the cache hit be skipped.
+	// Error counters for AlphaAdvantage requests
+
 	srv := &http.Server{
 		Addr:              defaultAddr,
 		Handler:           api.NewServer(cfg, log, &client, store).Routes(),
