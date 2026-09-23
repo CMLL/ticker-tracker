@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -33,7 +34,6 @@ type Entry struct {
 
 // Calculates the NDays average close based on the descending order of Date
 func (t *Ticker) CalculateAverageClose() {
-	// TODO the average has to take into account the NDays parameter, its not taking into consideration.
 	sum := float32(0.0)
 	for _, entry := range t.RawData {
 		sum += entry.Close
@@ -44,12 +44,17 @@ func (t *Ticker) CalculateAverageClose() {
 
 // Creates a new Ticker from StockData, it parses the structure from a map to an array for better
 // response structure
-func NewTickerFromStockData(adv advantage.StockData) Ticker {
+func NewTickerFromStockData(adv advantage.StockData, days int) Ticker {
 	result := Ticker{
 		Symbol: adv.Metadata.Symbol,
 	}
 	points := []Entry{}
+	count := 0
 	for key, value := range adv.Series {
+		// Stop passing information beyond the days we want.
+		if count == days {
+			break
+		}
 		day, err := time.Parse("2006-01-02", key)
 		if err != nil {
 			logrus.Warnf("Unable to parse date for entry %s: %s", key, err)
@@ -76,7 +81,11 @@ func NewTickerFromStockData(adv advantage.StockData) Ticker {
 			float32(cls),
 		}
 		points = append(points, entry)
+		count += 1
 	}
+	slices.SortFunc(points, func(a, b Entry) int {
+		return b.Date.Compare(a.Date)
+	})
 	result.RawData = points
 	return result
 }
@@ -101,7 +110,7 @@ func (s *Server) handleAverage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	ticker := NewTickerFromStockData(data)
+	ticker := NewTickerFromStockData(data, s.cfg.NDays)
 	ticker.CalculateAverageClose()
 
 	s.writeJSON(w, http.StatusOK, ticker)
