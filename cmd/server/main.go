@@ -10,6 +10,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"ticker/internal/advantage"
 	"ticker/internal/api"
 	"ticker/internal/config"
 )
@@ -27,9 +28,11 @@ func main() {
 		log.WithError(err).Fatal("configuration error")
 	}
 
+	client := advantage.NewAdvantageClient(cfg.APIKey, cfg.Ticker, cfg.NDays)
+
 	srv := &http.Server{
 		Addr:              defaultAddr,
-		Handler:           api.NewServer(cfg, log).Routes(),
+		Handler:           api.NewServer(cfg, log, &client).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

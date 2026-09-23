@@ -33,6 +33,10 @@ type TimeSerie struct {
 
 const AdvantageUrl = "https://www.alphavantage.co/query"
 
+type IAdvantage interface {
+	GetTickerData(ctx context.Context) (StockData, error)
+}
+
 type AdvantageClient struct {
 	key    string
 	symbol string
