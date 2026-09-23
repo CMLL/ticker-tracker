@@ -14,7 +14,7 @@ docker compose up -d web
 ### Kubernetes
 
 ```bash
-# Modifyt the secret value in k8s/secret.yaml before
+# Modify the secret value in k8s/secret.yaml before
 kubectl apply -f k8s/secret.yaml
 kubectl apply -f k8s/manifest.yaml
 
