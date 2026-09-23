@@ -2,13 +2,21 @@
 
 Small go server that pulls the NDAYS from a SYMBOL and calculates its average value.
 
-### Run
+### Docker Compose
 
 ```bash
 touch .env
 echo "API_KEY={KEY}\nTICKER={TICKER}\nNDAYS={days}" > .env
 
-go run cmd/server/main.go
+docker compose up -d web
+```
 
-curl -X GET http://localhost:8080/average
+### Kubernetes
+
+```bash
+# Modifyt the secret value in k8s/secret.yaml before
+kubectl apply -f k8s/secret.yaml
+kubectl apply -f k8s/manifest.yaml
+
+curl http://{INGRESS_HOST}/average
 ```
