@@ -3,4 +3,5 @@
 .gitignore
 Dockerfile
 .dockerignore
-README.md
+*.md
+k8s
