@@ -24,6 +24,12 @@ type ICache interface {
 	Set(item *memcache.Item) error
 }
 
+type pinger interface {
+	Ping() error
+}
+
+var _ pinger = (*memcache.Client)(nil)
+
 type Server struct {
 	cfg   *config.Config
 	log   *logrus.Logger
@@ -120,7 +126,26 @@ func NewServer(cfg *config.Config, log *logrus.Logger, adv advantage.IAdvantage,
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /average", s.handleAverage)
+	mux.HandleFunc("GET /health/live", s.handleLive)
+	mux.HandleFunc("GET /health/ready", s.handleReady)
 	return mux
+}
+
+// Liveness probe
+func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// Readiness probe. Checks if memcached is up with a ping.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if p, ok := s.cache.(pinger); ok {
+		if err := p.Ping(); err != nil {
+			s.log.WithError(err).Warn("readiness check failed: memcached unreachable")
+			s.writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
+	}
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleAverage(w http.ResponseWriter, r *http.Request) {
