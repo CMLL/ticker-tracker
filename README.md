@@ -6,7 +6,7 @@ Small go server that pulls the NDAYS from a SYMBOL and calculates its average va
 
 ```bash
 touch .env
-echo "API_KEY={KEY}\nTICKER={TICKER}\nNDAYS={days}" > .env
+echo -e "API_KEY={KEY}\nTICKER={TICKER}\nNDAYS={days}" > .env
 
 docker compose up -d web
 ```
