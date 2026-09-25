@@ -17,6 +17,7 @@ import (
 
 	"ticker/internal/advantage"
 	"ticker/internal/config"
+	"ticker/internal/metrics"
 )
 
 // fakeAdvantage stands in for AdvantageClient so no test touches the network.
@@ -77,7 +78,9 @@ func newTestServer(t *testing.T, adv advantage.IAdvantage, nDays int) *Server {
 	log := logrus.New()
 	log.Out = io.Discard
 	cfg := &config.Config{Ticker: "IBM", APIKey: "test-key", NDays: nDays}
-	return NewServer(cfg, log, adv, &fakeCache{})
+	m_provider, _ := metrics.NewPrometheusProvider()
+	metrics, _ := metrics.New(m_provider)
+	return NewServer(cfg, log, adv, &fakeCache{}, metrics)
 }
 
 // serie builds one row the way Alpha Vantage sends it — every number a string.
