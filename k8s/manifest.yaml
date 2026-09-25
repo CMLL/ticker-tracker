@@ -128,7 +128,7 @@ spec:
       containers:
         - name: web
           image: docker.io/cllamach/ticker_tracker:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -223,6 +223,13 @@ spec:
                   name: web
                   port:
                     name: http
+            - path: /metrics
+              pathType: Prefix
+              backend:
+                service:
+                  name: web
+                  port:
+                    name: metrics
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
