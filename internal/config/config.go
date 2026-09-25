@@ -8,13 +8,17 @@ import (
 	"strings"
 )
 
-const defaultMemcachedAddr = "localhost:11211"
+const (
+	defaultMemcachedAddr = "localhost:11211"
+	defaultMetricsAddr   = ":9090"
+)
 
 type Config struct {
 	Ticker        string
 	APIKey        string
 	NDays         int
 	MemcachedAddr string
+	MetricsAddr   string
 }
 
 func Load() (*Config, error) {
@@ -28,6 +32,7 @@ func Load() (*Config, error) {
 		APIKey:        os.Getenv("API_KEY"),
 		NDays:         ndays,
 		MemcachedAddr: cmp.Or(os.Getenv("MEMCACHED_ADDR"), defaultMemcachedAddr),
+		MetricsAddr:   cmp.Or(os.Getenv("METRICS_ADDR"), defaultMetricsAddr),
 	}
 
 	var missing []string

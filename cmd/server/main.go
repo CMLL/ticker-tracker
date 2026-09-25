@@ -14,6 +14,7 @@ import (
 	"ticker/internal/advantage"
 	"ticker/internal/api"
 	"ticker/internal/config"
+	"ticker/internal/metrics"
 )
 
 const defaultAddr = ":8080"
@@ -35,18 +36,30 @@ func main() {
 		log.WithError(err).WithField("addr", cfg.MemcachedAddr).Fatal("memcached unreachable")
 	}
 
-	// TODO Missing exported metrics for observability.
-	// To Setup:
-	// Requests histogram to track performance.
-	// Cache read request duration to detect if we are hammering the cache with read requests.
-	// Cache write request duration to detect if the writes instead of the reads are slow.
-	// AlphaAdvantage request duration to detect a network issue reaching out
-	// Counters for Cache layer hits, detects if a software bug makes the cache hit be skipped.
-	// Error counters for AlphaAdvantage requests
+	mp, err := metrics.NewPrometheusProvider()
+	if err != nil {
+		log.WithError(err).Fatal("metrics provider setup failed")
+	}
+	m, err := metrics.New(mp)
+	if err != nil {
+		log.WithError(err).Fatal("metrics instruments setup failed")
+	}
 
 	srv := &http.Server{
 		Addr:              defaultAddr,
-		Handler:           api.NewServer(cfg, log, &client, store).Routes(),
+		Handler:           api.NewServer(cfg, log, &client, store, m).Routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	// Metrics live on their own listener so the public ingress never exposes them.
+	mmux := http.NewServeMux()
+	mmux.Handle("GET /metrics", metrics.Handler())
+	metricsSrv := &http.Server{
+		Addr:              cfg.MetricsAddr,
+		Handler:           mmux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -56,10 +69,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		log.WithFields(logrus.Fields{"addr": defaultAddr, "ticker": cfg.Ticker}).Info("server listening")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+	go func() {
+		log.WithField("addr", cfg.MetricsAddr).Info("metrics server listening")
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -75,6 +94,12 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.WithError(err).Fatal("graceful shutdown failed")
+	}
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		log.WithError(err).Error("metrics server shutdown failed")
+	}
+	if err := mp.Shutdown(shutdownCtx); err != nil {
+		log.WithError(err).Error("meter provider shutdown failed")
 	}
 	log.Info("server stopped")
 }

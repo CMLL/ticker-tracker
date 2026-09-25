@@ -17,6 +17,7 @@ services:
     image: cllamach/ticker_tracker:latest
     ports:
       - "8080:8080"
+      - "9090:9090"
     environment:
       MEMCACHED_ADDR: memcached:11211
       TICKER: ${TICKER}
@@ -25,4 +26,36 @@ services:
     depends_on:
       memcached:
         condition: service_healthy
+    restart: on-failure
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    volumes:
+      - ./observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - web
+      - prometheus
+    restart: on-failure
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9091:9090"
+    restart: on-failure
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
     restart: on-failure

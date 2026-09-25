@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -13,6 +15,7 @@ import (
 
 	"ticker/internal/advantage"
 	"ticker/internal/config"
+	"ticker/internal/metrics"
 )
 
 // How long do we keep the fetched data cached for,
@@ -31,10 +34,11 @@ type pinger interface {
 var _ pinger = (*memcache.Client)(nil)
 
 type Server struct {
-	cfg   *config.Config
-	log   *logrus.Logger
-	adv   advantage.IAdvantage
-	cache ICache
+	cfg     *config.Config
+	log     *logrus.Logger
+	adv     advantage.IAdvantage
+	cache   ICache
+	metrics *metrics.Metrics
 }
 
 // Builds a cache key of the symbol + date so that we can avoid repulling the
@@ -119,8 +123,8 @@ func NewTickerFromStockData(adv advantage.StockData, days int) Ticker {
 	return result
 }
 
-func NewServer(cfg *config.Config, log *logrus.Logger, adv advantage.IAdvantage, cache ICache) *Server {
-	return &Server{cfg, log, adv, cache}
+func NewServer(cfg *config.Config, log *logrus.Logger, adv advantage.IAdvantage, cache ICache, m *metrics.Metrics) *Server {
+	return &Server{cfg, log, adv, cache, m}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -128,7 +132,45 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /average", s.handleAverage)
 	mux.HandleFunc("GET /health/live", s.handleLive)
 	mux.HandleFunc("GET /health/ready", s.handleReady)
-	return mux
+	return s.instrument(mux)
+}
+
+// statusRecorder captures the status code written by the wrapped handler.
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if !r.wroteHeader {
+		r.status, r.wroteHeader = code, true
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	r.wroteHeader = true
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+func (s *Server) instrument(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		route := r.Pattern
+		if _, p, ok := strings.Cut(route, " "); ok {
+			route = p
+		}
+		if route == "" {
+			route = "unmatched"
+		}
+		s.metrics.RecordRequest(r.Context(), r.Method, route, rec.status, time.Since(start))
+	})
 }
 
 // Liveness probe
@@ -159,17 +201,19 @@ func (s *Server) handleAverage(w http.ResponseWriter, r *http.Request) {
 	s.log.WithField("ticker", s.cfg.Ticker).Info("GET /average")
 
 	key := buildCacheKey(s.cfg.Ticker, time.Now())
-	data, hit := s.cachedData(key)
+	data, hit := s.cachedData(r.Context(), key)
 	if !hit {
 		var err error
+		start := time.Now()
 		data, err = s.adv.GetTickerData(r.Context())
+		s.metrics.RecordUpstream(r.Context(), time.Since(start), err)
 		if err != nil {
 			s.log.WithError(err).Error("unable to fetch ticker data")
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 		if len(data.Series) > 0 {
-			s.cacheData(key, data)
+			s.cacheData(r.Context(), key, data)
 		}
 	}
 	s.log.WithFields(logrus.Fields{"key": key, "hit": hit}).Info("ticker data")
@@ -180,10 +224,12 @@ func (s *Server) handleAverage(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, ticker)
 }
 
-func (s *Server) cachedData(key string) (advantage.StockData, bool) {
+func (s *Server) cachedData(ctx context.Context, key string) (advantage.StockData, bool) {
 	var zero advantage.StockData
 
+	start := time.Now()
 	item, err := s.cache.Get(key)
+	s.metrics.RecordCacheRead(ctx, time.Since(start), err)
 	if errors.Is(err, memcache.ErrCacheMiss) {
 		return zero, false
 	}
@@ -200,7 +246,7 @@ func (s *Server) cachedData(key string) (advantage.StockData, bool) {
 	return data, true
 }
 
-func (s *Server) cacheData(key string, data advantage.StockData) {
+func (s *Server) cacheData(ctx context.Context, key string, data advantage.StockData) {
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		s.log.WithError(err).WithField("key", key).Error("unable to encode value for cache")
@@ -208,7 +254,10 @@ func (s *Server) cacheData(key string, data advantage.StockData) {
 	}
 
 	item := &memcache.Item{Key: key, Value: encoded, Expiration: int32(cacheTTL.Seconds())}
-	if err := s.cache.Set(item); err != nil {
+	start := time.Now()
+	err = s.cache.Set(item)
+	s.metrics.RecordCacheWrite(ctx, time.Since(start), err)
+	if err != nil {
 		s.log.WithError(err).WithFields(logrus.Fields{
 			"key":   key,
 			"bytes": len(encoded),

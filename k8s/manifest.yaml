@@ -87,7 +87,6 @@ metadata:
     app: web
     app.kubernetes.io/part-of: ticker-tracker
 spec:
-  replicas: 2
   selector:
     matchLabels:
       app: web
@@ -96,6 +95,10 @@ spec:
       labels:
         app: web
         app.kubernetes.io/part-of: ticker-tracker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -134,6 +137,8 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            - name: metrics
+              containerPort: 9090
           envFrom:
             - configMapRef:
                 name: web-config
@@ -143,6 +148,8 @@ spec:
                 secretKeyRef:
                   name: apikey
                   key: API_KEY
+            - name: GOMEMLIMIT
+              value: 115MiB
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -160,6 +167,25 @@ spec:
             limits:
               memory: 128Mi
 ---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 90
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -175,6 +201,9 @@ spec:
     - name: http
       port: 80
       targetPort: http
+    - name: metrics
+      port: 9090
+      targetPort: metrics
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
